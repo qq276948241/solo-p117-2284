@@ -80,6 +80,10 @@ class Player:
         self.power_up = False
         self.power_up_timer = 0
         self.power_up_duration = FPS * 10
+        self.shield = False
+        self.shield_timer = 0
+        self.shield_duration = FPS * 8
+        self.shield_phase = 0
         self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
 
     def update(self, keys):
@@ -97,6 +101,12 @@ class Player:
             self.power_up_timer -= 1
             if self.power_up_timer <= 0:
                 self.power_up = False
+
+        if self.shield:
+            self.shield_timer -= 1
+            self.shield_phase += 0.1
+            if self.shield_timer <= 0:
+                self.shield = False
 
         self.rect.x = self.x
         self.rect.y = self.y
@@ -118,6 +128,11 @@ class Player:
         self.power_up = True
         self.power_up_timer = self.power_up_duration
 
+    def activate_shield(self):
+        self.shield = True
+        self.shield_timer = self.shield_duration
+        self.shield_phase = 0
+
     def draw(self, screen):
         pygame.draw.polygon(screen, BLUE, [
             (self.x + self.width // 2, self.y),
@@ -129,6 +144,16 @@ class Player:
         if self.power_up:
             pygame.draw.circle(screen, YELLOW, (self.x + self.width // 2, self.y + self.height // 2),
                                self.width // 2 + 3, 2)
+
+        if self.shield:
+            cx = self.x + self.width // 2
+            cy = self.y + self.height // 2
+            radius = self.width // 2 + 8 + int(3 * math.sin(self.shield_phase))
+            alpha = 180 if self.shield_timer > FPS else int(180 * (self.shield_timer / FPS))
+            shield_surf = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(shield_surf, (80, 150, 255, alpha), (radius + 2, radius + 2), radius, 3)
+            pygame.draw.circle(shield_surf, (150, 200, 255, alpha // 2), (radius + 2, radius + 2), radius - 3, 1)
+            screen.blit(shield_surf, (cx - radius - 2, cy - radius - 2))
 
 
 class Bullet:
@@ -250,6 +275,80 @@ class PowerUp:
         pygame.draw.polygon(screen, RED, all_points)
 
 
+class Particle:
+    def __init__(self, x, y, color=None):
+        self.x = x
+        self.y = y
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(1.5, 5.0)
+        self.vx = math.cos(angle) * speed
+        self.vy = math.sin(angle) * speed
+        self.lifetime = random.randint(15, 40)
+        self.max_lifetime = self.lifetime
+        self.size = random.randint(2, 5)
+        if color is None:
+            self.color = random.choice([
+                (255, 200, 50), (255, 150, 30), (255, 100, 20),
+                (200, 80, 20), (255, 255, 100)
+            ])
+        else:
+            self.color = color
+        self.active = True
+
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+        self.vx *= 0.97
+        self.vy *= 0.97
+        self.lifetime -= 1
+        if self.lifetime <= 0:
+            self.active = False
+
+    def draw(self, screen):
+        alpha_ratio = self.lifetime / self.max_lifetime
+        r = min(255, int(self.color[0] * alpha_ratio))
+        g = min(255, int(self.color[1] * alpha_ratio))
+        b = min(255, int(self.color[2] * alpha_ratio))
+        s = max(1, int(self.size * alpha_ratio))
+        pygame.draw.rect(screen, (r, g, b), (int(self.x), int(self.y), s, s))
+
+
+class ShieldPowerUp:
+    def __init__(self):
+        self.radius = 12
+        self.x = random.randint(self.radius, SCREEN_WIDTH - self.radius)
+        self.y = -self.radius
+        self.speed_y = 2
+        self.active = True
+        self.pulse_phase = 0
+        self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
+
+    def update(self):
+        self.y += self.speed_y
+        self.pulse_phase += 0.15
+        if self.y > SCREEN_HEIGHT + self.radius:
+            self.active = False
+        self.rect.x = self.x - self.radius
+        self.rect.y = self.y - self.radius
+
+    def draw(self, screen):
+        pulse = int(4 * abs(self.pulse_phase % 1 - 0.5) * 2)
+        pygame.draw.circle(screen, (80, 150, 255), (int(self.x), int(self.y)), self.radius + pulse, 2)
+        all_points = []
+        for i in range(10):
+            angle = i * 36 - 90
+            rad = angle * math.pi / 180
+            if i % 2 == 0:
+                r = (self.radius - 2) * 0.9
+            else:
+                r = (self.radius - 6) * 0.9
+            px = self.x + r * math.cos(rad)
+            py = self.y + r * math.sin(rad)
+            all_points.append((int(px), int(py)))
+        pygame.draw.polygon(screen, (80, 150, 255), all_points)
+        pygame.draw.circle(screen, (150, 200, 255), (int(self.x), int(self.y)), 4)
+
+
 class Button:
     def __init__(self, x, y, width, height, text, color, hover_color, text_color=WHITE):
         self.rect = pygame.Rect(x, y, width, height)
@@ -294,6 +393,8 @@ class Game:
         self.bullets = []
         self.meteors = []
         self.power_ups = []
+        self.shield_power_ups = []
+        self.particles = []
         self.stars = [Star() for _ in range(150)]
         self.score = 0
         self.game_time = 0
@@ -314,6 +415,13 @@ class Game:
     def spawn_power_up(self):
         self.power_ups.append(PowerUp())
 
+    def spawn_shield_power_up(self):
+        self.shield_power_ups.append(ShieldPowerUp())
+
+    def spawn_particles(self, x, y, count=12, color=None):
+        for _ in range(count):
+            self.particles.append(Particle(x, y, color))
+
     def check_collisions(self):
         for bullet in self.bullets:
             if not bullet.active:
@@ -325,6 +433,8 @@ class Game:
                     bullet.active = False
                     meteor.active = False
                     self.score += meteor.score
+                    count = 15 if meteor.size == 'large' else (10 if meteor.size == 'medium' else 6)
+                    self.spawn_particles(meteor.x, meteor.y, count)
                     new_meteors = meteor.split()
                     for nm in new_meteors:
                         diff = DIFFICULTY[self.difficulty]
@@ -341,14 +451,29 @@ class Game:
                 power_up.active = False
                 self.player.activate_power_up()
 
+        for shield_pu in self.shield_power_ups:
+            if not shield_pu.active:
+                continue
+            if shield_pu.rect.colliderect(self.player.rect):
+                shield_pu.active = False
+                self.player.activate_shield()
+
         for meteor in self.meteors:
             if not meteor.active:
                 continue
             if meteor.rect.colliderect(self.player.rect):
-                self.state = 'gameover'
-                if self.score > self.high_score:
-                    self.high_score = self.score
-                    save_high_score(self.high_score)
+                if self.player.shield:
+                    self.player.shield = False
+                    self.player.shield_timer = 0
+                    meteor.active = False
+                    self.spawn_particles(meteor.x, meteor.y, 10, (80, 150, 255))
+                else:
+                    self.state = 'gameover'
+                    self.spawn_particles(self.player.x + self.player.width // 2,
+                                         self.player.y + self.player.height // 2, 25)
+                    if self.score > self.high_score:
+                        self.high_score = self.score
+                        save_high_score(self.high_score)
                 break
 
     def update_menu(self, events):
@@ -438,6 +563,12 @@ class Game:
         for power_up in self.power_ups:
             power_up.update()
 
+        for shield_pu in self.shield_power_ups:
+            shield_pu.update()
+
+        for particle in self.particles:
+            particle.update()
+
         self.game_time += 1
 
         diff = DIFFICULTY[self.difficulty]
@@ -450,12 +581,16 @@ class Game:
         self.power_up_spawn_timer += 1
         if self.power_up_spawn_timer >= FPS * 15:
             self.power_up_spawn_timer = 0
-            if random.random() < 0.7:
+            if random.random() < 0.5:
                 self.spawn_power_up()
+            elif random.random() < 0.5:
+                self.spawn_shield_power_up()
 
         self.bullets = [b for b in self.bullets if b.active]
         self.meteors = [m for m in self.meteors if m.active]
         self.power_ups = [p for p in self.power_ups if p.active]
+        self.shield_power_ups = [s for s in self.shield_power_ups if s.active]
+        self.particles = [p for p in self.particles if p.active]
 
         self.check_collisions()
 
@@ -476,6 +611,12 @@ class Game:
         for power_up in self.power_ups:
             power_up.draw(self.screen)
 
+        for shield_pu in self.shield_power_ups:
+            shield_pu.draw(self.screen)
+
+        for particle in self.particles:
+            particle.draw(self.screen)
+
         self.player.draw(self.screen)
 
         score_text = self.font_small.render(f'分数: {self.score}', True, WHITE)
@@ -489,10 +630,15 @@ class Game:
             pu_text = self.font_small.render(f'三连发: {time_left}s', True, YELLOW)
             self.screen.blit(pu_text, (SCREEN_WIDTH - 150, 10))
 
+        if self.player.shield:
+            time_left = self.player.shield_timer // FPS
+            sh_text = self.font_small.render(f'护盾: {time_left}s', True, (80, 150, 255))
+            self.screen.blit(sh_text, (SCREEN_WIDTH - 150, 40))
+
         minutes = self.game_time // (FPS * 60)
         seconds = (self.game_time // FPS) % 60
         time_text = self.font_small.render(f'时间: {minutes:02d}:{seconds:02d}', True, WHITE)
-        self.screen.blit(time_text, (SCREEN_WIDTH - 150, 40))
+        self.screen.blit(time_text, (SCREEN_WIDTH - 150, 70))
 
     def update_gameover(self, events):
         mouse_pos = pygame.mouse.get_pos()
